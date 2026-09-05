@@ -1,0 +1,280 @@
+// Prisma Schema for Smart Co-op Platform (Sistem Informasi Koperasi Digital)
+// Spec: BRD-PRD-Sistem-Koperasi-Digital.md & GEMINI.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Akun & Identitas ──────────────────────────────────────────
+model User {
+  id              String              @id @default(uuid())
+  username        String              @unique
+  email           String?             @unique
+  phone           String              @unique
+  passwordHash    String
+  role            Role                @default(MEMBER)
+  isActive        Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  member          Member?
+  savingsRecorded SavingTransaction[] @relation("RecordedBy")
+  journalEntries  JournalEntry[]
+  auditLogs       AuditLog[]
+}
+
+model Member {
+  id                String             @id @default(uuid())
+  userId            String             @unique
+  memberNo          String             @unique // Format: KOP-YYYYMM-XXXX
+  nik               String             @unique
+  fullName          String
+  address           String
+  phone             String
+  joinDate          DateTime           @default(now())
+  status            MemberStatus       @default(PENDING)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  savings           SavingAccount[]
+  loans             Loan[]
+  salesTransactions SalesTransaction[]
+}
+
+// ── Simpanan ───────────────────────────────────────────────────
+model SavingAccount {
+  id            String              @id @default(uuid())
+  memberId      String
+  type          SavingType
+  accountNumber String              @unique
+  balance       Decimal             @default(0) @db.Decimal(15, 2)
+  member        Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  transactions  SavingTransaction[]
+
+  @@unique([memberId, type])
+}
+
+model SavingTransaction {
+  id            String        @id @default(uuid())
+  accountId     String
+  type          SavingTxType
+  amount        Decimal       @db.Decimal(15, 2)
+  balanceAfter  Decimal       @db.Decimal(15, 2)
+  referenceNo   String        @unique
+  recordedById  String
+  createdAt     DateTime      @default(now())
+  savingAccount SavingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  recordedBy    User          @relation("RecordedBy", fields: [recordedById], references: [id])
+}
+
+// ── Pinjaman ───────────────────────────────────────────────────
+model Loan {
+  id                 String            @id @default(uuid())
+  memberId           String
+  loanCode           String            @unique
+  principal          Decimal           @db.Decimal(15, 2)
+  interestRate       Decimal           @db.Decimal(5, 2) // Annual interest rate in percent
+  interestType       LoanInterestType
+  tenorMonths        Int
+  remainingPrincipal Decimal           @db.Decimal(15, 2)
+  status             LoanStatus        @default(DRAFT)
+  disbursementDate   DateTime?
+  createdAt          DateTime          @default(now())
+  member             Member            @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  installments       LoanInstallment[]
+}
+
+model LoanInstallment {
+  id            String            @id @default(uuid())
+  loanId        String
+  installmentNo Int
+  dueDate       DateTime
+  principalDue  Decimal           @db.Decimal(15, 2)
+  interestDue   Decimal           @db.Decimal(15, 2)
+  penaltyAmount Decimal           @default(0) @db.Decimal(15, 2)
+  paidAmount    Decimal           @default(0) @db.Decimal(15, 2)
+  paidAt        DateTime?
+  status        InstallmentStatus @default(UNPAID)
+  loan          Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@unique([loanId, installmentNo])
+}
+
+// ── Akuntansi (SAK ETAP / SAK EP) ───────────────────────────────
+model Account {
+  id            String          @id @default(uuid())
+  code          String          @unique
+  name          String
+  category      AccountCategory
+  normalBalance BalanceSide
+  isActive      Boolean         @default(true)
+  journalLines  JournalLine[]
+}
+
+model JournalEntry {
+  id           String        @id @default(uuid())
+  entryNumber  String        @unique
+  entryDate    DateTime      @default(now())
+  description  String
+  sourceModule String // SAVINGS, LOAN, POS, MANUAL
+  sourceRefId  String?
+  createdById  String
+  createdAt    DateTime      @default(now())
+  createdBy    User          @relation(fields: [createdById], references: [id])
+  lines        JournalLine[]
+}
+
+model JournalLine {
+  id             String       @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal      @default(0) @db.Decimal(15, 2)
+  credit         Decimal      @default(0) @db.Decimal(15, 2)
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account        Account      @relation(fields: [accountId], references: [id])
+}
+
+// ── Unit Ritel / POS (Phase 3) ─────────────────────────────────
+model Product {
+  id             String          @id @default(uuid())
+  sku            String          @unique
+  barcode        String?         @unique
+  name           String
+  category       String
+  unit           String // Pcs, Box, Kg
+  hpp            Decimal         @db.Decimal(15, 2)
+  priceGeneral   Decimal         @db.Decimal(15, 2)
+  priceMember    Decimal         @db.Decimal(15, 2)
+  stockQty       Decimal         @default(0) @db.Decimal(15, 2)
+  minStock       Decimal         @default(0) @db.Decimal(15, 2)
+  stockMovements StockMovement[]
+  saleLines      SaleLine[]
+}
+
+model StockMovement {
+  id        String        @id @default(uuid())
+  productId String
+  type      StockMoveType
+  quantity  Decimal       @db.Decimal(15, 2)
+  note      String?
+  createdAt DateTime      @default(now())
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model SalesTransaction {
+  id            String     @id @default(uuid())
+  referenceNo   String     @unique
+  memberId      String?
+  paymentMethod PosPayment
+  totalAmount   Decimal    @db.Decimal(15, 2)
+  createdAt     DateTime   @default(now())
+  member        Member?    @relation(fields: [memberId], references: [id])
+  lines         SaleLine[]
+}
+
+model SaleLine {
+  id        String           @id @default(uuid())
+  saleId    String
+  productId String
+  qty       Decimal          @db.Decimal(15, 2)
+  unitPrice Decimal          @db.Decimal(15, 2)
+  sale      SalesTransaction @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product   Product          @relation(fields: [productId], references: [id])
+}
+
+// ── Audit Log ──────────────────────────────────────────────────
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String // CREATE, UPDATE, DELETE
+  entityName String
+  entityId   String?
+  beforeData Json?
+  afterData  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+}
+
+// ── Enums ──────────────────────────────────────────────────────
+enum Role {
+  MEMBER
+  TELLER
+  LOAN_OFFICER
+  MANAGER
+  ACCOUNTANT
+  SUPERADMIN
+}
+
+enum MemberStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  RESIGNED
+}
+
+enum SavingType {
+  POKOK
+  WAJIB
+  SUKARELA
+}
+
+enum SavingTxType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  INTEREST
+  SHU
+}
+
+enum LoanInterestType {
+  FLAT
+  EFFECTIVE
+  MURABAHAH
+}
+
+enum LoanStatus {
+  DRAFT
+  VERIFIED
+  APPROVED
+  REJECTED
+  DISBURSED
+  ACTIVE
+  PAID_OFF
+  DEFAULTED
+}
+
+enum InstallmentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+enum AccountCategory {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum BalanceSide {
+  DEBIT
+  CREDIT
+}
+
+enum StockMoveType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+enum PosPayment {
+  CASH
+  DEBIT
+  SAVINGS_DEDUCTION
+}
