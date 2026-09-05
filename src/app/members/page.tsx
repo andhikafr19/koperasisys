@@ -29,7 +29,7 @@ export default async function MembersPage() {
           </p>
         </div>
 
-        <MembersClient members={members} canManage={canManage} />
+        <MembersClient members={JSON.parse(JSON.stringify(members))} canManage={canManage} />
       </div>
     </DashboardShell>
   );

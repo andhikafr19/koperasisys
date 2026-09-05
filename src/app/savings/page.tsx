@@ -114,8 +114,8 @@ export default async function SavingsPage() {
         </div>
 
         <SavingsClient
-          members={memberOptions}
-          transactions={transactions}
+          members={JSON.parse(JSON.stringify(memberOptions))}
+          transactions={JSON.parse(JSON.stringify(transactions))}
           userRole={user.role}
         />
       </div>

@@ -48,8 +48,8 @@ export default async function LoansPage() {
         </div>
 
         <LoansClient
-          loans={loans}
-          members={members}
+          loans={JSON.parse(JSON.stringify(loans))}
+          members={JSON.parse(JSON.stringify(members))}
           userRole={user.role}
           currentMemberId={user.memberId}
         />

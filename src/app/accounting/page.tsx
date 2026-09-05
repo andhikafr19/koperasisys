@@ -72,7 +72,10 @@ export default async function AccountingPage() {
           </p>
         </div>
 
-        <AccountingClient accounts={accounts} journalEntries={journalEntries} />
+        <AccountingClient
+          accounts={JSON.parse(JSON.stringify(accounts))}
+          journalEntries={JSON.parse(JSON.stringify(journalEntries))}
+        />
       </div>
     </DashboardShell>
   );

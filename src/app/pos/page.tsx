@@ -44,8 +44,8 @@ export default async function PosPage() {
         </div>
 
         <PosClient
-          products={products}
-          members={memberOptions}
+          products={JSON.parse(JSON.stringify(products))}
+          members={JSON.parse(JSON.stringify(memberOptions))}
           userRole={user.role}
         />
       </div>
