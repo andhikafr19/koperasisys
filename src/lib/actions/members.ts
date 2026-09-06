@@ -211,3 +211,75 @@ export async function updateMemberStatusAction(memberId: string, newStatus: Memb
 
   revalidatePath('/members');
 }
+
+export async function deleteMemberAction(memberId: string) {
+  const currentUser = await requireAuth([Role.SUPERADMIN, Role.MANAGER]);
+
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    include: {
+      loans: {
+        where: {
+          status: { in: ['ACTIVE', 'DISBURSED'] },
+        },
+      },
+    },
+  });
+
+  if (!member) throw new Error('Anggota tidak ditemukan.');
+
+  if (member.loans.length > 0) {
+    throw new Error(
+      `Tidak dapat menghapus anggota ${member.fullName} karena masih memiliki pinjaman aktif yang belum lunas.`
+    );
+  }
+
+  await prisma.$transaction(
+    async (tx) => {
+      // 1. Unlink sales transactions if any
+      await tx.salesTransaction.updateMany({
+        where: { memberId },
+        data: { memberId: null },
+      });
+
+      // 2. Delete loan installments & loans
+      const memberLoans = await tx.loan.findMany({ where: { memberId }, select: { id: true } });
+      const loanIds = memberLoans.map((l) => l.id);
+      if (loanIds.length > 0) {
+        await tx.loanInstallment.deleteMany({ where: { loanId: { in: loanIds } } });
+        await tx.loan.deleteMany({ where: { memberId } });
+      }
+
+      // 3. Delete saving transactions & saving accounts
+      const memberAccounts = await tx.savingAccount.findMany({ where: { memberId }, select: { id: true } });
+      const accountIds = memberAccounts.map((a) => a.id);
+      if (accountIds.length > 0) {
+        await tx.savingTransaction.deleteMany({ where: { accountId: { in: accountIds } } });
+        await tx.savingAccount.deleteMany({ where: { memberId } });
+      }
+
+      // 4. Delete member
+      await tx.member.delete({ where: { id: memberId } });
+
+      // 5. Delete associated user account
+      await tx.user.delete({ where: { id: member.userId } });
+
+      // 6. Audit log
+      await createAuditLog(tx, {
+        userId: currentUser.id,
+        action: 'DELETE',
+        entityName: 'Member',
+        entityId: memberId,
+        beforeData: { memberNo: member.memberNo, fullName: member.fullName },
+      });
+    },
+    {
+      maxWait: 10000,
+      timeout: 30000,
+    }
+  );
+
+  revalidatePath('/members');
+  revalidatePath('/dashboard');
+  return { success: true };
+}

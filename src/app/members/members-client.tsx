@@ -5,7 +5,7 @@ import { Member, SavingAccount, SavingType, MemberStatus } from '@prisma/client'
 import { Modal } from '@/components/ui/modal';
 import { Badge } from '@/components/ui/badge';
 import { formatRupiah } from '@/lib/currency';
-import { createMemberAction, updateMemberStatusAction } from '@/lib/actions/members';
+import { createMemberAction, updateMemberStatusAction, deleteMemberAction } from '@/lib/actions/members';
 import {
   UserPlus,
   Search,
@@ -18,6 +18,7 @@ import {
   XCircle,
   Clock,
   IdCard,
+  Trash2,
 } from 'lucide-react';
 import Decimal from 'decimal.js';
 
@@ -126,6 +127,29 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
         'Gagal Mengubah Status',
         err?.message || 'Terjadi kesalahan saat mengubah status keanggotaan.'
       );
+    }
+  };
+
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteMember = async (memberId: string, memberName: string) => {
+    if (
+      !window.confirm(
+        `Yakin ingin menghapus data anggota ${memberName}? Semua rekening simpanan dan data terkait akan dihapus secara permanen.`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await deleteMemberAction(memberId);
+      setIsDeleting(false);
+      setSelectedMember(null);
+      showToast('success', 'Anggota Berhasil Dihapus', `Data anggota ${memberName} telah dihapus dari sistem.`);
+    } catch (err: any) {
+      setIsDeleting(false);
+      showToast('error', 'Gagal Menghapus Anggota', err?.message || 'Terjadi kesalahan saat menghapus anggota.');
     }
   };
 
@@ -466,11 +490,11 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
               </div>
             </div>
 
-            {/* Status Change Actions */}
+            {/* Status Change & Delete Actions */}
             {canManage && (
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-xs text-slate-500">Ubah Status Keanggotaan:</span>
-                <div className="flex gap-2">
+              <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Status:</span>
                   {selectedMember.status !== 'ACTIVE' && (
                     <button
                       onClick={() =>
@@ -494,12 +518,22 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
                           MemberStatus.RESIGNED
                         )
                       }
-                      className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold transition-colors cursor-pointer"
+                      className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 text-xs font-bold transition-colors cursor-pointer"
                     >
                       Set Nonaktif / Keluar
                     </button>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => handleDeleteMember(selectedMember.id, selectedMember.fullName)}
+                  className="px-3.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 self-start sm:self-auto disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isDeleting ? 'Menghapus...' : 'Hapus Anggota'}</span>
+                </button>
               </div>
             )}
           </div>
