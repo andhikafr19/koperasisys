@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import Decimal from 'decimal.js';
 
+import { Toast, AlertCard } from '@/components/ui/toast';
+
 interface MemberWithSavings extends Member {
   savings: SavingAccount[];
 }
@@ -39,6 +41,32 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Toast / Snackbar notification state
+  const [toast, setToast] = useState<{
+    isOpen: boolean;
+    variant: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    variant: 'error',
+    title: '',
+    message: '',
+  });
+
+  const showToast = (
+    variant: 'success' | 'error' | 'warning' | 'info',
+    title: string,
+    message: string
+  ) => {
+    setToast({
+      isOpen: true,
+      variant,
+      title,
+      message,
+    });
+  };
+
   // Filter logic
   const filteredMembers = members.filter((m) => {
     const matchesSearch =
@@ -55,14 +83,49 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
     setFormError(null);
     setIsSubmitting(true);
 
-    const formData = new FormData(e.currentTarget);
-    const result = await createMemberAction(null, formData);
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const fullName = (formData.get('fullName') as string)?.trim() || 'Anggota Baru';
 
-    setIsSubmitting(false);
-    if (result?.error) {
-      setFormError(result.error);
-    } else {
-      setIsAddModalOpen(false);
+    try {
+      const result = await createMemberAction(null, formData);
+
+      setIsSubmitting(false);
+      if (result?.error) {
+        setFormError(result.error);
+        showToast('error', 'Gagal Menyimpan Anggota', result.error);
+      } else {
+        setIsAddModalOpen(false);
+        form.reset();
+        showToast(
+          'success',
+          'Pendaftaran Anggota Berhasil!',
+          `${fullName} dengan No. Anggota ${result.memberNo || ''} berhasil didaftarkan dan diaktifkan.`
+        );
+      }
+    } catch (err: any) {
+      setIsSubmitting(false);
+      const errMsg = err?.message || 'Terjadi kesalahan sistem saat mendaftarkan anggota.';
+      setFormError(errMsg);
+      showToast('error', 'Gagal Menyimpan Anggota', errMsg);
+    }
+  };
+
+  const handleStatusChange = async (memberId: string, memberName: string, newStatus: MemberStatus) => {
+    try {
+      await updateMemberStatusAction(memberId, newStatus);
+      setSelectedMember(null);
+      showToast(
+        'success',
+        'Status Berhasil Diubah',
+        `Status ${memberName} berhasil diubah menjadi ${newStatus}.`
+      );
+    } catch (err: any) {
+      showToast(
+        'error',
+        'Gagal Mengubah Status',
+        err?.message || 'Terjadi kesalahan saat mengubah status keanggotaan.'
+      );
     }
   };
 
@@ -103,7 +166,10 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
 
         {canManage && (
           <button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={() => {
+              setFormError(null);
+              setIsAddModalOpen(true);
+            }}
             className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm transition-all shadow-sm flex items-center gap-2 cursor-pointer flex-shrink-0"
           >
             <UserPlus className="w-4 h-4" />
@@ -111,6 +177,15 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
           </button>
         )}
       </div>
+
+      {/* Floating Toast / Snackbar Alert */}
+      <Toast
+        isOpen={toast.isOpen}
+        variant={toast.variant}
+        title={toast.title}
+        message={toast.message}
+        onClose={() => setToast((prev) => ({ ...prev, isOpen: false }))}
+      />
 
       {/* Members Table */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
@@ -204,11 +279,20 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
         description="Data anggota baru akan diverifikasi dan nomor anggota dibuat otomatis."
         maxWidth="lg"
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          onChange={() => {
+            if (formError) setFormError(null);
+          }}
+          className="space-y-4"
+        >
           {formError && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
-              {formError}
-            </div>
+            <AlertCard
+              variant="error"
+              title="Pendaftaran Gagal Disimpan"
+              message={formError}
+              onDismiss={() => setFormError(null)}
+            />
           )}
 
           <div>
@@ -294,6 +378,13 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
             </span>
           </div>
 
+          {formError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
+              <span className="truncate">Periksa kembali data yang diinput di atas.</span>
+            </div>
+          )}
+
           <div className="pt-3 border-t border-slate-100 flex justify-end gap-2.5">
             <button
               type="button"
@@ -305,9 +396,16 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-sm disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
             >
-              {isSubmitting ? 'Memproses...' : 'Simpan & Aktifkan Anggota'}
+              {isSubmitting ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Menyimpan...</span>
+                </>
+              ) : (
+                'Simpan & Aktifkan Anggota'
+              )}
             </button>
           </div>
         </form>
@@ -375,10 +473,13 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
                 <div className="flex gap-2">
                   {selectedMember.status !== 'ACTIVE' && (
                     <button
-                      onClick={async () => {
-                        await updateMemberStatusAction(selectedMember.id, MemberStatus.ACTIVE);
-                        setSelectedMember(null);
-                      }}
+                      onClick={() =>
+                        handleStatusChange(
+                          selectedMember.id,
+                          selectedMember.fullName,
+                          MemberStatus.ACTIVE
+                        )
+                      }
                       className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-bold transition-colors cursor-pointer"
                     >
                       Aktifkan
@@ -386,10 +487,13 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
                   )}
                   {selectedMember.status === 'ACTIVE' && (
                     <button
-                      onClick={async () => {
-                        await updateMemberStatusAction(selectedMember.id, MemberStatus.RESIGNED);
-                        setSelectedMember(null);
-                      }}
+                      onClick={() =>
+                        handleStatusChange(
+                          selectedMember.id,
+                          selectedMember.fullName,
+                          MemberStatus.RESIGNED
+                        )
+                      }
                       className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold transition-colors cursor-pointer"
                     >
                       Set Nonaktif / Keluar

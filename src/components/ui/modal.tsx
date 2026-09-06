@@ -54,9 +54,9 @@ export function Modal({
 
       {/* Modal Card */}
       <div
-        className={`relative w-full ${widthClass} bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden transform transition-all z-10 my-8`}
+        className={`relative w-full ${widthClass} bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden transform transition-all z-10 my-auto flex flex-col max-h-[calc(100vh-2.5rem)]`}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div>
             <h3 className="text-lg font-bold text-slate-900">{title}</h3>
             {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
@@ -69,7 +69,7 @@ export function Modal({
           </button>
         </div>
 
-        <div className="p-6 max-h-[calc(85vh-8rem)] overflow-y-auto">{children}</div>
+        <div className="p-6 overflow-y-auto flex-1">{children}</div>
       </div>
     </div>
   );

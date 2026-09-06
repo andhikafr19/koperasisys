@@ -27,119 +27,163 @@ export async function createMemberAction(prevState: any, formData: FormData) {
       return { error: 'NIK harus terdiri dari 16 digit angka.' };
     }
 
-    // Check duplicate NIK or Phone
-    const existing = await prisma.member.findFirst({
+    // Check duplicate NIK or Phone in Member
+    const existingMember = await prisma.member.findFirst({
       where: {
         OR: [{ nik }, { phone }],
       },
     });
 
-    if (existing) {
-      return { error: 'Anggota dengan NIK atau No. WhatsApp tersebut sudah terdaftar.' };
+    if (existingMember) {
+      if (existingMember.nik === nik) {
+        return { error: 'Anggota dengan NIK ini sudah terdaftar dalam sistem.' };
+      }
+      return { error: 'Anggota dengan No. WhatsApp ini sudah terdaftar.' };
     }
 
-    // Generate Member No: KOP-YYYYMM-XXXX
+    // Check duplicate Phone or Email in User
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone },
+          ...(email ? [{ email }] : []),
+        ],
+      },
+    });
+
+    if (existingUser) {
+      if (existingUser.phone === phone) {
+        return { error: 'No. WhatsApp sudah terdaftar pada pengguna lain.' };
+      }
+      if (email && existingUser.email === email) {
+        return { error: 'Email sudah terdaftar pada pengguna lain.' };
+      }
+    }
+
+    // Generate Member No: KOP-YYYYMM-XXXX (with collision avoidance)
     const now = new Date();
     const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const countThisMonth = await prisma.member.count();
-    const sequence = String(countThisMonth + 1).padStart(4, '0');
-    const memberNo = `KOP-${yearMonth}-${sequence}`;
+    const countTotal = await prisma.member.count();
+    let seqNumber = countTotal + 1;
+    let memberNo = `KOP-${yearMonth}-${String(seqNumber).padStart(4, '0')}`;
+    while (await prisma.member.findUnique({ where: { memberNo } })) {
+      seqNumber++;
+      memberNo = `KOP-${yearMonth}-${String(seqNumber).padStart(4, '0')}`;
+    }
 
     const defaultPassword = await hashPassword('password123');
-    const username = `user_${nik.slice(-6)}`;
+    const username = `user_${nik.slice(-6)}_${seqNumber}`;
+    const accSuffix = memberNo.replace('KOP-', '');
 
-    // Execute atomic creation
-    const newMember = await prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          username,
-          email,
-          phone,
-          passwordHash: defaultPassword,
-          role: Role.MEMBER,
-          isActive: true,
-        },
-      });
-
-      const member = await tx.member.create({
-        data: {
-          userId: user.id,
-          memberNo,
-          nik,
-          fullName,
-          address,
-          phone,
-          status: MemberStatus.ACTIVE,
-        },
-      });
-
-      // Create standard saving accounts: POKOK, WAJIB, SUKARELA
-      const pokokAcc = await tx.savingAccount.create({
-        data: {
-          memberId: member.id,
-          type: SavingType.POKOK,
-          accountNumber: `SP-${memberNo.slice(-4)}`,
-          balance: initialPokok,
-        },
-      });
-
-      await tx.savingAccount.create({
-        data: {
-          memberId: member.id,
-          type: SavingType.WAJIB,
-          accountNumber: `SW-${memberNo.slice(-4)}`,
-          balance: new Decimal(0),
-        },
-      });
-
-      await tx.savingAccount.create({
-        data: {
-          memberId: member.id,
-          type: SavingType.SUKARELA,
-          accountNumber: `SS-${memberNo.slice(-4)}`,
-          balance: new Decimal(0),
-        },
-      });
-
-      // Record initial Pokok transaction & journal if paid
-      if (initialPokok.greaterThan(0)) {
-        const refNo = `DEP-${yearMonth}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await tx.savingTransaction.create({
+    // Execute atomic creation with explicit 30s timeout & 10s maxWait
+    const newMember = await prisma.$transaction(
+      async (tx) => {
+        const user = await tx.user.create({
           data: {
-            accountId: pokokAcc.id,
-            type: SavingTxType.DEPOSIT,
-            amount: initialPokok,
-            balanceAfter: initialPokok,
-            referenceNo: refNo,
-            recordedById: currentUser.id,
+            username,
+            email,
+            phone,
+            passwordHash: defaultPassword,
+            role: Role.MEMBER,
+            isActive: true,
           },
         });
 
-        await createSavingsDepositJournal(tx, {
-          savingType: 'POKOK',
-          amount: initialPokok,
-          referenceNo: refNo,
-          memberName: fullName,
-          createdById: currentUser.id,
+        const member = await tx.member.create({
+          data: {
+            userId: user.id,
+            memberNo,
+            nik,
+            fullName,
+            address,
+            phone,
+            status: MemberStatus.ACTIVE,
+          },
         });
+
+        // Create standard saving accounts: POKOK, WAJIB, SUKARELA
+        const pokokAcc = await tx.savingAccount.create({
+          data: {
+            memberId: member.id,
+            type: SavingType.POKOK,
+            accountNumber: `SP-${accSuffix}`,
+            balance: initialPokok,
+          },
+        });
+
+        await tx.savingAccount.create({
+          data: {
+            memberId: member.id,
+            type: SavingType.WAJIB,
+            accountNumber: `SW-${accSuffix}`,
+            balance: new Decimal(0),
+          },
+        });
+
+        await tx.savingAccount.create({
+          data: {
+            memberId: member.id,
+            type: SavingType.SUKARELA,
+            accountNumber: `SS-${accSuffix}`,
+            balance: new Decimal(0),
+          },
+        });
+
+        // Record initial Pokok transaction & journal if paid
+        if (initialPokok.greaterThan(0)) {
+          const refNo = `DEP-${yearMonth}-${Math.floor(1000 + Math.random() * 9000)}`;
+          await tx.savingTransaction.create({
+            data: {
+              accountId: pokokAcc.id,
+              type: SavingTxType.DEPOSIT,
+              amount: initialPokok,
+              balanceAfter: initialPokok,
+              referenceNo: refNo,
+              recordedById: currentUser.id,
+            },
+          });
+
+          await createSavingsDepositJournal(tx, {
+            savingType: 'POKOK',
+            amount: initialPokok,
+            referenceNo: refNo,
+            memberName: fullName,
+            createdById: currentUser.id,
+          });
+        }
+
+        return member;
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
       }
+    );
 
-      await createAuditLog(tx, {
-        userId: currentUser.id,
-        action: 'CREATE',
-        entityName: 'Member',
-        entityId: member.id,
-        afterData: { memberNo, fullName, nik },
-      });
-
-      return member;
+    // Record audit log asynchronously after transaction commits successfully
+    await createAuditLog(prisma, {
+      userId: currentUser.id,
+      action: 'CREATE',
+      entityName: 'Member',
+      entityId: newMember.id,
+      afterData: { memberNo: newMember.memberNo, fullName, nik },
     });
 
     revalidatePath('/members');
     revalidatePath('/dashboard');
     return { success: true, memberNo: newMember.memberNo };
   } catch (err: any) {
-    return { error: err.message || 'Terjadi kesalahan sistem saat mendaftarkan anggota.' };
+    if (err?.message === 'NEXT_REDIRECT' || err?.digest?.startsWith('NEXT_REDIRECT')) {
+      throw err;
+    }
+    console.error('Error in createMemberAction:', err);
+    let message = err?.message || 'Terjadi kesalahan sistem saat mendaftarkan anggota.';
+    if (message.includes('Transaction') || message.includes('timeout') || message.includes('closed')) {
+      message = 'Koneksi ke database sedang sibuk atau waktu transaksi habis. Silakan coba simpan kembali.';
+    } else if (message.includes('Unique constraint') || message.includes('P2002')) {
+      message = 'Data anggota (NIK, WhatsApp, atau Email) sudah terdaftar dalam sistem.';
+    }
+    return { error: message };
   }
 }
 
