@@ -114,7 +114,11 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
 
   const handleStatusChange = async (memberId: string, memberName: string, newStatus: MemberStatus) => {
     try {
-      await updateMemberStatusAction(memberId, newStatus);
+      const res = await updateMemberStatusAction(memberId, newStatus);
+      if (res && !res.success) {
+        showToast('error', 'Gagal Mengubah Status', res.error || 'Terjadi kesalahan saat mengubah status keanggotaan.');
+        return;
+      }
       setSelectedMember(null);
       showToast(
         'success',
@@ -125,7 +129,7 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
       showToast(
         'error',
         'Gagal Mengubah Status',
-        err?.message || 'Terjadi kesalahan saat mengubah status keanggotaan.'
+        err?.message || 'Terjadi kesalahan sistem saat mengubah status keanggotaan.'
       );
     }
   };
@@ -143,8 +147,14 @@ export function MembersClient({ members, canManage }: MembersClientProps) {
 
     setIsDeleting(true);
     try {
-      await deleteMemberAction(memberId);
+      const res = await deleteMemberAction(memberId);
       setIsDeleting(false);
+
+      if (res && !res.success) {
+        showToast('error', 'Gagal Menghapus Anggota', res.error || 'Terjadi kesalahan saat menghapus anggota.');
+        return;
+      }
+
       setSelectedMember(null);
       showToast('success', 'Anggota Berhasil Dihapus', `Data anggota ${memberName} telah dihapus dari sistem.`);
     } catch (err: any) {

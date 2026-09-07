@@ -188,98 +188,117 @@ export async function createMemberAction(prevState: any, formData: FormData) {
 }
 
 export async function updateMemberStatusAction(memberId: string, newStatus: MemberStatus) {
-  const currentUser = await requireAuth([Role.SUPERADMIN, Role.MANAGER]);
+  try {
+    const currentUser = await requireAuth([Role.SUPERADMIN, Role.MANAGER]);
 
-  const member = await prisma.member.findUnique({ where: { id: memberId } });
-  if (!member) throw new Error('Anggota tidak ditemukan.');
+    const member = await prisma.member.findUnique({ where: { id: memberId } });
+    if (!member) {
+      return { success: false, error: 'Anggota tidak ditemukan.' };
+    }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.member.update({
-      where: { id: memberId },
-      data: { status: newStatus },
+    await prisma.$transaction(async (tx) => {
+      await tx.member.update({
+        where: { id: memberId },
+        data: { status: newStatus },
+      });
+
+      await createAuditLog(tx, {
+        userId: currentUser.id,
+        action: 'UPDATE',
+        entityName: 'Member',
+        entityId: memberId,
+        beforeData: { status: member.status },
+        afterData: { status: newStatus },
+      });
     });
 
-    await createAuditLog(tx, {
-      userId: currentUser.id,
-      action: 'UPDATE',
-      entityName: 'Member',
-      entityId: memberId,
-      beforeData: { status: member.status },
-      afterData: { status: newStatus },
-    });
-  });
-
-  revalidatePath('/members');
+    revalidatePath('/members');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Terjadi kesalahan saat mengubah status anggota.' };
+  }
 }
 
 export async function deleteMemberAction(memberId: string) {
-  const currentUser = await requireAuth([Role.SUPERADMIN, Role.MANAGER]);
+  try {
+    const currentUser = await requireAuth([Role.SUPERADMIN, Role.MANAGER]);
 
-  const member = await prisma.member.findUnique({
-    where: { id: memberId },
-    include: {
-      loans: {
-        where: {
-          status: { in: ['ACTIVE', 'DISBURSED'] },
+    const member = await prisma.member.findUnique({
+      where: { id: memberId },
+      include: {
+        loans: {
+          where: {
+            status: { in: ['ACTIVE', 'DISBURSED'] },
+          },
         },
       },
-    },
-  });
+    });
 
-  if (!member) throw new Error('Anggota tidak ditemukan.');
-
-  if (member.loans.length > 0) {
-    throw new Error(
-      `Tidak dapat menghapus anggota ${member.fullName} karena masih memiliki pinjaman aktif yang belum lunas.`
-    );
-  }
-
-  await prisma.$transaction(
-    async (tx) => {
-      // 1. Unlink sales transactions if any
-      await tx.salesTransaction.updateMany({
-        where: { memberId },
-        data: { memberId: null },
-      });
-
-      // 2. Delete loan installments & loans
-      const memberLoans = await tx.loan.findMany({ where: { memberId }, select: { id: true } });
-      const loanIds = memberLoans.map((l) => l.id);
-      if (loanIds.length > 0) {
-        await tx.loanInstallment.deleteMany({ where: { loanId: { in: loanIds } } });
-        await tx.loan.deleteMany({ where: { memberId } });
-      }
-
-      // 3. Delete saving transactions & saving accounts
-      const memberAccounts = await tx.savingAccount.findMany({ where: { memberId }, select: { id: true } });
-      const accountIds = memberAccounts.map((a) => a.id);
-      if (accountIds.length > 0) {
-        await tx.savingTransaction.deleteMany({ where: { accountId: { in: accountIds } } });
-        await tx.savingAccount.deleteMany({ where: { memberId } });
-      }
-
-      // 4. Delete member
-      await tx.member.delete({ where: { id: memberId } });
-
-      // 5. Delete associated user account
-      await tx.user.delete({ where: { id: member.userId } });
-
-      // 6. Audit log
-      await createAuditLog(tx, {
-        userId: currentUser.id,
-        action: 'DELETE',
-        entityName: 'Member',
-        entityId: memberId,
-        beforeData: { memberNo: member.memberNo, fullName: member.fullName },
-      });
-    },
-    {
-      maxWait: 10000,
-      timeout: 30000,
+    if (!member) {
+      return { success: false, error: 'Anggota tidak ditemukan.' };
     }
-  );
 
-  revalidatePath('/members');
-  revalidatePath('/dashboard');
-  return { success: true };
+    if (member.loans.length > 0) {
+      return {
+        success: false,
+        error: `Tidak dapat menghapus anggota ${member.fullName} karena masih memiliki pinjaman aktif yang belum lunas.`,
+      };
+    }
+
+    await prisma.$transaction(
+      async (tx) => {
+        // 1. Unlink sales transactions if any
+        await tx.salesTransaction.updateMany({
+          where: { memberId },
+          data: { memberId: null },
+        });
+
+        // 2. Delete loan installments & loans
+        const memberLoans = await tx.loan.findMany({ where: { memberId }, select: { id: true } });
+        const loanIds = memberLoans.map((l) => l.id);
+        if (loanIds.length > 0) {
+          await tx.loanInstallment.deleteMany({ where: { loanId: { in: loanIds } } });
+          await tx.loan.deleteMany({ where: { memberId } });
+        }
+
+        // 3. Delete saving transactions & saving accounts
+        const memberAccounts = await tx.savingAccount.findMany({ where: { memberId }, select: { id: true } });
+        const accountIds = memberAccounts.map((a) => a.id);
+        if (accountIds.length > 0) {
+          await tx.savingTransaction.deleteMany({ where: { accountId: { in: accountIds } } });
+          await tx.savingAccount.deleteMany({ where: { memberId } });
+        }
+
+        // 4. Delete member
+        await tx.member.delete({ where: { id: memberId } });
+
+        // 5. Unlink audit logs if any to prevent foreign key violation, then delete user
+        await tx.auditLog.updateMany({
+          where: { userId: member.userId },
+          data: { userId: null },
+        });
+
+        await tx.user.delete({ where: { id: member.userId } });
+
+        // 6. Audit log
+        await createAuditLog(tx, {
+          userId: currentUser.id,
+          action: 'DELETE',
+          entityName: 'Member',
+          entityId: memberId,
+          beforeData: { memberNo: member.memberNo, fullName: member.fullName },
+        });
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
+      }
+    );
+
+    revalidatePath('/members');
+    revalidatePath('/dashboard');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Terjadi kesalahan sistem saat menghapus anggota.' };
+  }
 }
